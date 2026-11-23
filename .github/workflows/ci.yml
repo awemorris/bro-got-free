@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ubuntu:
+    name: Build ${{ matrix.platform }}
+    runs-on: ubuntu-24.04
+    env:
+      LLVM_MINGW_TAG: "20261104"
+      LLVM_MINGW_NAME: "llvm-mingw-20261104-ucrt-ubuntu-22.04-x86_64"
+      LLVM_MINGW_SHA256: "919380403de87dca3c581c2053230cd298af5e891286628ba0613b7fed370926"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake zip ninja-build
+
+      - name: Install llvm-mingw
+        run: |
+          curl -L "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_TAG/$LLVM_MINGW_NAME.tar.xz" -o "$RUNNER_TEMP/llvm-mingw.tar.xz"
+          tar xJf "$RUNNER_TEMP/llvm-mingw.tar.xz" -C "$RUNNER_TEMP"
+          ls $RUNNER_TEMP
+
+      - name: Build
+        run: |
+          git submodule update --init --recursive
+          make LLVM_MINGW_PATH=$RUNNER_TEMP/$LLVM_MINGW_NAME
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts
+          path: browser-x64.zip
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    needs:
+      - build-ubuntu
+    steps:
+      - name: Download the disk images
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          prerelease: false
+          files: |
+            artifacts/browser-x64.zip
